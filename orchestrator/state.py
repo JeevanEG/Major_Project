@@ -21,8 +21,10 @@ class GraphState(BaseModel):
     tutoring_session: Optional[Dict[str, Any]] = None
     assessment_result: Optional[Dict[str, Any]] = None
     feedback_summary: Optional[Dict[str, Any]] = None
-
+    tutor_session: Optional[Dict[str, Any]] = None
+    knowledge_sources: Optional[Dict[str, Any]] = None
     # ===== Control Fields =====
     current_step: Optional[str] = None
     iteration_count: int = 0
     is_completed: bool = False
+    
