@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 class UserInput(BaseModel):
@@ -11,7 +11,8 @@ class UserInput(BaseModel):
 
 class GraphState(BaseModel):
     # ===== User Input =====
-    user_input: UserInput
+    user_input: Optional[UserInput] = None
+    session_id: Optional[str] = "default_session"
 
     # ===== Agent Outputs =====
     learner_profile: Optional[Dict[str, Any]] = None
@@ -22,7 +23,15 @@ class GraphState(BaseModel):
     assessment_result: Optional[Dict[str, Any]] = None
     feedback_summary: Optional[Dict[str, Any]] = None
     tutor_session: Optional[Dict[str, Any]] = None
-    knowledge_sources: Optional[Dict[str, Any]] = None
+    knowledge_sources: Optional[List[Any]] = None
+    
+    # ===== Progress Tracking =====
+    current_module_index: int = 0
+    current_topic_index: int = 0
+    chat_history: List[Dict[str, str]] = []
+    completed_topics: List[str] = []
+    active_quiz: Optional[Dict[str, Any]] = None
+
     # ===== Control Fields =====
     current_step: Optional[str] = None
     iteration_count: int = 0

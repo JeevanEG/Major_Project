@@ -2,7 +2,8 @@ from agents.base_agent import BaseAgent
 from orchestrator.state import GraphState
 from services.llm_service import LLMService
 from services.knowledge_service import KnowledgeService
-from langchain_core.messages import HumanMessage
+from memory.session_store import SessionStore
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 
 class TutorAgent(BaseAgent):
@@ -10,73 +11,85 @@ class TutorAgent(BaseAgent):
     def __init__(self):
         self.llm_service = LLMService()
         self.knowledge_service = KnowledgeService()
+        self.session_store = SessionStore()
 
     def run(self, state: GraphState) -> GraphState:
+        # 1. Fetch current topic
+        stages = state.curriculum_plan.get("learning_stages", [])
+        if not stages:
+            state.tutor_session = {"error": "No curriculum available"}
+            return state
 
-        curriculum = state.curriculum_plan["learning_stages"]
+        mod_idx = state.current_module_index
+        top_idx = state.current_topic_index
 
-        # Select first stage and first skill for now
-        stage = curriculum[0]
-        skill_data = stage["skills"][0]
+        if mod_idx >= len(stages):
+            state.tutor_session = {"content": "Curriculum completed."}
+            return state
 
-        skill = skill_data["skill"]
-        topic = skill_data["topics"][0]
-
-        # Retrieve knowledge using CRAG
-        result = self.knowledge_service.retrieve_with_crag(topic)
-
-        mode = result["mode"]
-        context = result["context"]
-        sources = result["sources"]
-
-        if mode == "rag":
-
-            prompt = f"""
-        You are an enterprise AI tutor.
-
-        Use the following textbook knowledge to teach the topic.
-
-        Topic:
-        {topic}
-
-        Context:
-        {context}
-
-        Instructions:
-        - Provide a clear explanation
-        - Give a real-world example
-        - Provide one short practice question
-        """
-
+        current_stage = stages[mod_idx]
+        all_skills = current_stage.get("skills", [])
+        
+        if mod_idx < len(all_skills):
+            skill_data = all_skills[mod_idx]
+            topics = skill_data.get("topics", [])
+            if top_idx < len(topics):
+                topic = topics[top_idx]
+                skill = skill_data["skill"]
+            else:
+                # Fallback if indices are slightly off
+                topic = topics[-1]
+                skill = skill_data["skill"]
         else:
+            state.tutor_session = {"content": "Stage completed."}
+            return state
 
-            prompt = f"""
-        You are an enterprise AI tutor.
+        # 2. Retrieve RAG context
+        result = self.knowledge_service.retrieve_with_crag(topic)
+        context = result.get("context", "")
 
-        Explain the following topic clearly.
+        # 3. Load history
+        history_data = self.session_store.get_history(state.session_id or "default")
+        
+        # 4. Determine Mode: Q&A or Lesson?
+        last_msg = history_data[-1] if history_data else None
+        is_question = last_msg and last_msg["role"] == "user"
 
-        Topic:
-        {topic}
+        messages = [SystemMessage(content=f"""
+            You are an expert AI Tutor teaching '{skill}'. 
+            Current Topic: {topic}
+            Context: {context}
+            
+            Guidelines:
+            - Use Markdown for formatting.
+            - If the user asks a question, answer it directly using the context.
+            - If it's a new lesson, explain the topic clearly with an example.
+            - Keep responses educational and encouraging.
+        """)]
 
-        Instructions:
-        - Provide a clear explanation
-        - Give a real-world example
-        - Provide one short practice question
-        """
+        for h in history_data[-8:]:
+            if h["role"] == "user":
+                messages.append(HumanMessage(content=h["content"]))
+            else:
+                messages.append(AIMessage(content=h["content"]))
 
-        response = self.llm_service.generate(
-            [HumanMessage(content=prompt)]
-        )
+        if not is_question:
+            # It's a "Next Topic" or initial trigger -> Deliver lesson
+            messages.append(HumanMessage(content=f"Please deliver the lesson for the topic: {topic}"))
 
+        # 5. Generate Response
+        response = self.llm_service.generate(messages)
+
+        # 6. Save & Update
         state.tutor_session = {
             "skill": skill,
             "topic": topic,
             "content": response.content
         }
-
-        # Store book sources used in RAG
-        state.knowledge_sources = sources
-
-        state.current_step = "tutoring_session_generated"
+        
+        # Sync history
+        history_data.append({"role": "assistant", "content": response.content, "topic": topic})
+        self.session_store.save_history(state.session_id or "default", history_data)
+        state.chat_history = history_data
 
         return state

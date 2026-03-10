@@ -8,6 +8,7 @@ class GeminiProvider:
             model=GEMINI_MODEL,
             temperature=TEMPERATURE,
             google_api_key=GOOGLE_API_KEY,
+            timeout=60, # 60 seconds timeout
         )
 
     def generate(self, messages):
