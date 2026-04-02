@@ -10,7 +10,9 @@ Instructions:
 - Identify the correct answer.
 - Provide a brief explanation for why the answer is correct.
 
-Ensure the output is structured correctly.
+CRITICAL: Return ONLY valid JSON.
+Do NOT wrap the JSON in markdown code blocks.
+Do NOT include any preamble or extra text.
 """
 
 ASSESSMENT_EVALUATION_PROMPT = """

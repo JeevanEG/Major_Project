@@ -21,28 +21,35 @@ class TutorAgent(BaseAgent):
             return state
 
         mod_idx = state.current_module_index
+        skill_idx = state.current_skill_index
         top_idx = state.current_topic_index
 
         if mod_idx >= len(stages):
             state.tutor_session = {"content": "Curriculum completed."}
+            state.is_completed = True
             return state
 
         current_stage = stages[mod_idx]
         all_skills = current_stage.get("skills", [])
         
-        if mod_idx < len(all_skills):
-            skill_data = all_skills[mod_idx]
-            topics = skill_data.get("topics", [])
-            if top_idx < len(topics):
-                topic = topics[top_idx]
-                skill = skill_data["skill"]
-            else:
-                # Fallback if indices are slightly off
-                topic = topics[-1]
-                skill = skill_data["skill"]
-        else:
-            state.tutor_session = {"content": "Stage completed."}
-            return state
+        if skill_idx >= len(all_skills):
+            # Move to next module/stage
+            state.current_module_index += 1
+            state.current_skill_index = 0
+            state.current_topic_index = 0
+            return self.run(state)
+
+        skill_data = all_skills[skill_idx]
+        topics = skill_data.get("topics", [])
+        
+        if top_idx >= len(topics):
+            # Move to next skill
+            state.current_skill_index += 1
+            state.current_topic_index = 0
+            return self.run(state)
+
+        topic = topics[top_idx]
+        skill = skill_data["skill"]
 
         # 2. Retrieve RAG context
         result = self.knowledge_service.retrieve_with_crag(topic)
@@ -74,7 +81,6 @@ class TutorAgent(BaseAgent):
                 messages.append(AIMessage(content=h["content"]))
 
         if not is_question:
-            # It's a "Next Topic" or initial trigger -> Deliver lesson
             messages.append(HumanMessage(content=f"Please deliver the lesson for the topic: {topic}"))
 
         # 5. Generate Response

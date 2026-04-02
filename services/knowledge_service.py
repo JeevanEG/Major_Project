@@ -30,6 +30,10 @@ class KnowledgeService:
     def ingest_documents(self):
 
         documents = []
+        
+        if not self.base_path.exists():
+            print(f"Directory {self.base_path} does not exist. Skipping ingestion.")
+            return
 
         for domain_folder in self.base_path.iterdir():
 
@@ -52,6 +56,10 @@ class KnowledgeService:
 
                 documents.extend(pages)
 
+        if not documents:
+            print("No documents found for ingestion.")
+            return
+
         print(f"Loaded {len(documents)} pages")
 
         chunks = self.text_splitter.split_documents(documents)
@@ -67,7 +75,10 @@ class KnowledgeService:
         vector_db.persist()
 
         print("Vector database created successfully")
+
     def load_vector_store(self):
+        if not os.path.exists(self.persist_directory):
+            return None
 
         vector_db = Chroma(
             persist_directory=self.persist_directory,
@@ -75,35 +86,41 @@ class KnowledgeService:
         )
 
         return vector_db
+
     def get_retriever(self):
         vector_db = self.load_vector_store()
         
-        # Optional: Check if the vector store actually has data
         if vector_db is None:
-            raise ValueError("Vector store not initialized. Run your ingestion script first!")
+            return None
 
         retriever = vector_db.as_retriever(
             search_type="similarity",
             search_kwargs={"k": 5}
         )
         return retriever
+
     def retrieve_context(self, query: str):
 
         retriever = self.get_retriever()
+        if not retriever:
+            return "", []
 
         docs = retriever.invoke(query)
 
         context = "\n\n".join([doc.page_content for doc in docs])
 
         return context, docs
+
     def evaluate_retrieval(self, query: str, docs):
+        if not docs:
+            return False
+            
         llm = LLMService()
 
         context_preview = "\n\n".join(
             [doc.page_content[:500] for doc in docs]
         )
 
-        # UPDATED PROMPT: More strict criteria for 'RELEVANT'
         prompt = f"""
             You are a grader assessing whether a retrieved document is relevant to a user query.
             
@@ -123,16 +140,13 @@ class KnowledgeService:
         response = llm.generate([HumanMessage(content=prompt)])
         decision = response.content.strip().upper()
 
-        # Returns True if 'RELEVANT' is in the response, else False
         return "RELEVANT" in decision and "IRRELEVANT" not in decision
 
     def retrieve_with_crag(self, query: str):
         context, docs = self.retrieve_context(query)
 
-        # 1. Get the boolean result
         is_relevant = self.evaluate_retrieval(query, docs)
 
-        # 2. FIXED LOGIC: Compare boolean to boolean, not string
         if is_relevant: 
             return {
                 "mode": "rag",
@@ -140,7 +154,6 @@ class KnowledgeService:
                 "sources": [doc.metadata for doc in docs]
             }
         else:
-            # This is where 'Corrective' RAG usually triggers a Web Search
             return {
                 "mode": "parametric",
                 "context": "",

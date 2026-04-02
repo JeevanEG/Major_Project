@@ -1,3 +1,9 @@
+import bcrypt
+
+# Monkey-patch bcrypt before passlib imports it
+if getattr(bcrypt, "__about__", None) is None:
+    bcrypt.__about__ = type("About", (object,), {"__version__": bcrypt.__version__})
+
 import json
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,12 +19,15 @@ from memory.learner_store import LearnerStore
 from agents.tutor_agent import TutorAgent
 from agents.assessment_agent import AssessmentAgent
 from orchestrator.controller import run_graph
+from api.routes import router as auth_router
 
 app = FastAPI(title="Autonomous AI Tutor API")
 
+# Register Authentication Routes
+app.include_router(auth_router)
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    print(f"Validation Error: {exc.errors()}")
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors(), "body": exc.body},
@@ -31,6 +40,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Autonomous AI Tutor API", "docs": "/docs"}
 
 @app.post("/run")
 def run(user_input: UserInput):
@@ -61,7 +74,7 @@ def chat(chat_input: ChatMessage):
 @app.post("/next-topic")
 def next_topic(state: GraphState):
     state.current_topic_index += 1
-    state.active_quiz = None # Reset quiz
+    state.active_quiz = None
     agent = TutorAgent()
     result = agent.run(state)
     return jsonable_encoder(result)
@@ -95,7 +108,6 @@ def submit_answer(submission: QuizSubmission):
         user_answer=submission.answer
     )
     
-    # 1. Add feedback to chat history
     session_id = state.session_id or "default_session"
     store = SessionStore()
     history = store.get_history(session_id)
@@ -106,12 +118,11 @@ def submit_answer(submission: QuizSubmission):
     
     state.chat_history = history
     
-    # 2. Mark topic as completed if correct
     if result["is_correct"]:
         topic = state.tutor_session.get("topic")
         if topic not in state.completed_topics:
             state.completed_topics.append(topic)
-        state.active_quiz = None # Clear quiz after passing
+        state.active_quiz = None
         
     return {
         "state": jsonable_encoder(state),

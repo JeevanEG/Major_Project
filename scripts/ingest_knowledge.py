@@ -1,13 +1,27 @@
-# from services.knowledge_service import KnowledgeService
+import os
+import sys
+from pathlib import Path
 
-# service = KnowledgeService()
-# service.ingest_documents()
+# Add the project root to sys.path
+sys.path.append(str(Path(__file__).parent.parent))
+
 from services.knowledge_service import KnowledgeService
 
-service = KnowledgeService()
+def main():
+    print("--- Knowledge Ingestion Service ---")
+    
+    # Ensure directories exist
+    base_path = Path("data/knowledge_base")
+    if not base_path.exists():
+        base_path.mkdir(parents=True, exist_ok=True)
+        print(f"Created directory: {base_path}")
+        print("Please place your PDF files in domain-specific folders within this directory.")
+        return
 
-result = service.retrieve_with_crag("What is the news of current war ongoing in Ukraine?")
-print()
-print(result["mode"])
-print(result["context"])
-print(result["sources"])
+    service = KnowledgeService()
+    print("Starting ingestion...")
+    service.ingest_documents()
+    print("Ingestion process completed.")
+
+if __name__ == "__main__":
+    main()

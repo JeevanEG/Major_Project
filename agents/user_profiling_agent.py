@@ -38,14 +38,11 @@ class UserProfilingAgent(BaseAgent):
         Target Role: {user_input.target_role}
         Learning Goal: {user_input.learning_goal}
 
-        Generate a structured learner profile in JSON format with keys:
-        - primary_domain
-        - transition_difficulty (low/medium/high)
-        - recommended_learning_intensity (low/medium/high)
-        - inferred_strengths (list of 3)
-        - inferred_weaknesses (list of 3)
-
-        Return ONLY valid JSON.
+        Generate a structured learner profile.
+        
+        CRITICAL: Return ONLY valid JSON. 
+        Do NOT wrap the JSON in markdown code blocks. 
+        Do NOT include any preamble or extra text.
         """
 
         response = self.llm_service.generate_structured(

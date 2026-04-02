@@ -95,6 +95,10 @@ class CurriculumPlannerAgent(BaseAgent):
         
         Ensure the content is tailored to the target proficiency levels provided.
         Focus on practical enterprise relevance.
+
+        CRITICAL: Return ONLY valid JSON.
+        Do NOT wrap the JSON in markdown code blocks.
+        Do NOT include any preamble or extra text.
         """
 
         response = self.llm_service.generate_structured(

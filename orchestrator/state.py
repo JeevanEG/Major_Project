@@ -26,14 +26,14 @@ class GraphState(BaseModel):
     knowledge_sources: Optional[List[Any]] = None
     
     # ===== Progress Tracking =====
-    current_module_index: int = 0
-    current_topic_index: int = 0
-    chat_history: List[Dict[str, str]] = []
-    completed_topics: List[str] = []
-    active_quiz: Optional[Dict[str, Any]] = None
+    current_module_index: int = Field(default=0)
+    current_skill_index: int = Field(default=0)
+    current_topic_index: int = Field(default=0)
+    chat_history: List[Dict[str, str]] = Field(default_factory=list)
+    completed_topics: List[str] = Field(default_factory=list)
+    active_quiz: Optional[Dict[str, Any]] = Field(default=None)
 
     # ===== Control Fields =====
-    current_step: Optional[str] = None
-    iteration_count: int = 0
-    is_completed: bool = False
-    
+    current_step: Optional[str] = Field(default=None)
+    iteration_count: int = Field(default=0)
+    is_completed: bool = Field(default=False)
