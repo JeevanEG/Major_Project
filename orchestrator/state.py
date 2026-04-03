@@ -19,7 +19,6 @@ class GraphState(BaseModel):
     enterprise_skill_map: Optional[Dict[str, Any]] = None
     skill_gap: Optional[Dict[str, Any]] = None
     curriculum_plan: Optional[Dict[str, Any]] = None
-    tutoring_session: Optional[Dict[str, Any]] = None
     assessment_result: Optional[Dict[str, Any]] = None
     feedback_summary: Optional[Dict[str, Any]] = None
     tutor_session: Optional[Dict[str, Any]] = None

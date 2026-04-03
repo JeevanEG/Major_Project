@@ -5,10 +5,11 @@ if getattr(bcrypt, "__about__", None) is None:
     bcrypt.__about__ = type("About", (object,), {"__version__": bcrypt.__version__})
 
 import json
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from typing import Optional, List, Any
@@ -23,8 +24,40 @@ from api.routes import router as auth_router
 
 app = FastAPI(title="Autonomous AI Tutor API")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount Static Files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Register Authentication Routes
 app.include_router(auth_router)
+
+from utils.auth_helper import get_current_user
+from database import UserModel
+
+@app.get("/api/me")
+def get_me(current_user: UserModel = Depends(get_current_user)):
+    return {"id": current_user.id, "username": current_user.username}
+
+@app.get("/api/roadmap")
+def get_roadmap(current_user: UserModel = Depends(get_current_user)):
+    # Use LearnerStore to get roadmap (which is effectively the state in this system)
+    store = LearnerStore()
+    learner_data = store.get_learner(current_user.username)
+    if not learner_data:
+        return JSONResponse(status_code=404, content={"detail": "No roadmap found"})
+    
+    # In this project, the roadmap is part of the overall GraphState.
+    # For simplicity, we might return the last state stored or just learner_data.
+    # Looking at the codebase, it seems we might need a way to persist GraphState fully.
+    # For Phase 1, we will return the learner_data as the roadmap source.
+    return learner_data
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -33,17 +66,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors(), "body": exc.body},
     )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Autonomous AI Tutor API", "docs": "/docs"}
+    return FileResponse("templates/index.html")
 
 @app.post("/run")
 def run(user_input: UserInput):
@@ -71,6 +96,35 @@ def chat(chat_input: ChatMessage):
     result = agent.run(state)
     return jsonable_encoder(result)
 
+class ChatRequest(BaseModel):
+    message: str
+    context: str
+    history: List[dict[str, str]]
+
+@app.post("/api/chat")
+def api_chat(request: ChatRequest):
+    from services.llm_service import LLMService
+    from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+    
+    llm = LLMService()
+    
+    system_prompt = f"You are an expert, encouraging AI Tutor. The user is currently studying the topic: {request.context}. Answer their questions clearly and concisely. If they ask something unrelated to programming or the current topic, gently guide them back to the subject."
+    
+    messages = [SystemMessage(content=system_prompt)]
+    
+    # Add history
+    for msg in request.history:
+        if msg["role"] == "user":
+            messages.append(HumanMessage(content=msg["content"]))
+        elif msg["role"] == "assistant":
+            messages.append(AIMessage(content=msg["content"]))
+            
+    # Add current message
+    messages.append(HumanMessage(content=request.message))
+    
+    response = llm.generate(messages)
+    return {"reply": response.content}
+
 @app.post("/next-topic")
 def next_topic(state: GraphState):
     state.current_topic_index += 1
@@ -82,8 +136,8 @@ def next_topic(state: GraphState):
 @app.post("/generate-quiz")
 def generate_quiz(state: GraphState):
     agent = AssessmentAgent()
-    topic = state.tutor_session.get("topic", "General")
-    content = state.tutor_session.get("content", "")
+    topic = state.tutor_session.get("topic", "General") if state.tutor_session else "General"
+    content = state.tutor_session.get("content", "") if state.tutor_session else ""
     
     quiz = agent.generate_quiz(topic, content)
     state.active_quiz = jsonable_encoder(quiz)
@@ -119,9 +173,12 @@ def submit_answer(submission: QuizSubmission):
     state.chat_history = history
     
     if result["is_correct"]:
-        topic = state.tutor_session.get("topic")
-        if topic not in state.completed_topics:
-            state.completed_topics.append(topic)
+        topic = state.tutor_session.get("topic") if state.tutor_session else None
+        if topic:
+            if state.completed_topics is None:
+                state.completed_topics = []
+            if topic not in state.completed_topics:
+                state.completed_topics.append(topic)
         state.active_quiz = None
         
     return {
