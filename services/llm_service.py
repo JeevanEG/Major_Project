@@ -13,7 +13,9 @@ class LLMService:
             raise ValueError("Unsupported LLM provider")
 
     def generate(self, messages):
+        # Using invoke internally to guarantee full payload reception
         return self.provider.generate(messages)
 
     def generate_structured(self, messages, output_schema):
+        # Using invoke internally to guarantee full payload reception
         return self.provider.generate_structured(messages, output_schema)

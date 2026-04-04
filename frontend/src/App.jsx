@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Roadmap from './pages/Roadmap';
 import Courses from './pages/Courses';
 import LearningViewer from './pages/LearningViewer';
+import Assessment from './pages/Assessment';
 import DashboardLayout from './layouts/DashboardLayout';
 import { Loader2 } from 'lucide-react';
 
@@ -46,12 +47,6 @@ function AppRoutes() {
         <Route path="roadmap" element={<Roadmap />} />
         <Route path="courses" element={<Courses />} />
         <Route path="learning/:skillId" element={<LearningViewer />} />
-        <Route path="skill-gap" element={
-          <div className="bg-white p-12 rounded-[2.5rem] shadow-sm border border-slate-100 text-center">
-            <h2 className="text-2xl font-black text-slate-900 mb-4">Skill Gap Analysis</h2>
-            <p className="text-slate-500 font-medium">Coming soon in Phase 2.</p>
-          </div>
-        } />
         <Route path="profile" element={
           <div className="bg-white p-12 rounded-[2.5rem] shadow-sm border border-slate-100 text-center">
             <h2 className="text-2xl font-black text-slate-900 mb-4">My Profile</h2>
@@ -59,6 +54,7 @@ function AppRoutes() {
           </div>
         } />
       </Route>
+      <Route path="/assessment" element={<ProtectedRoute><Assessment /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

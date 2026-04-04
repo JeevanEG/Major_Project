@@ -10,7 +10,9 @@ class GeminiProvider:
             model=GEMINI_MODEL,
             temperature=TEMPERATURE,
             google_api_key=GOOGLE_API_KEY,
-            timeout=60, # 60 seconds timeout
+            timeout=120, # 120 seconds timeout
+            max_output_tokens=8192, # Expanded token window for large batch generation
+            # No stop parameter or stop_sequences to prevent truncation
         )
 
     def generate(self, messages):
@@ -26,6 +28,7 @@ class GeminiProvider:
         else:
             messages.append(SystemMessage(content=format_instructions))
 
+        # Guarantee full payload reception using .invoke() instead of streaming
         response = self.llm.invoke(messages)
 
         # Robust parsing to handle potential markdown wrappers

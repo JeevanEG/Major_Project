@@ -5,14 +5,16 @@ if getattr(bcrypt, "__about__", None) is None:
     bcrypt.__about__ = type("About", (object,), {"__version__": bcrypt.__version__})
 
 import json
-from fastapi import FastAPI, HTTPException, Depends, Request
+import re
+from fastapi import FastAPI, HTTPException, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel
-from typing import Optional, List, Any
+from pydantic import BaseModel, Field
+from typing import Optional, List, Any, Dict
+from sqlalchemy.orm import Session
 
 from orchestrator.state import UserInput, GraphState
 from memory.session_store import SessionStore
@@ -21,6 +23,8 @@ from agents.tutor_agent import TutorAgent
 from agents.assessment_agent import AssessmentAgent
 from orchestrator.controller import run_graph
 from api.routes import router as auth_router
+from database import UserModel, get_db
+from utils.auth_helper import get_current_user
 
 app = FastAPI(title="Autonomous AI Tutor API")
 
@@ -38,26 +42,77 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Register Authentication Routes
 app.include_router(auth_router)
 
-from utils.auth_helper import get_current_user
-from database import UserModel
-
 @app.get("/api/me")
 def get_me(current_user: UserModel = Depends(get_current_user)):
-    return {"id": current_user.id, "username": current_user.username}
+    return {
+        "id": current_user.id, 
+        "username": current_user.username,
+        "current_role": current_user.current_role,
+        "target_role": current_user.target_role,
+        "progress_data": current_user.get_progress()
+    }
 
 @app.get("/api/roadmap")
 def get_roadmap(current_user: UserModel = Depends(get_current_user)):
-    # Use LearnerStore to get roadmap (which is effectively the state in this system)
+    if current_user.roadmap_json:
+        return json.loads(current_user.roadmap_json)
+    
+    # Fallback to store if DB is empty but store has it
     store = LearnerStore()
     learner_data = store.get_learner(current_user.username)
     if not learner_data:
         return JSONResponse(status_code=404, content={"detail": "No roadmap found"})
-    
-    # In this project, the roadmap is part of the overall GraphState.
-    # For simplicity, we might return the last state stored or just learner_data.
-    # Looking at the codebase, it seems we might need a way to persist GraphState fully.
-    # For Phase 1, we will return the learner_data as the roadmap source.
     return learner_data
+
+@app.post("/api/user/reset")
+def reset_user(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    current_user.current_role = None
+    current_user.target_role = None
+    current_user.roadmap_json = None
+    current_user.progress_data = '{"completed_modules": [], "current_topic_index": 0, "bookmarks": {}}'
+    db.commit()
+    return {"message": "User data reset successfully"}
+
+class AssessmentSubmission(BaseModel):
+    skill_name: str
+    topics: List[str]
+    score: float
+    feedback: Optional[str] = None
+
+@app.post("/api/assessment/submit")
+def submit_assessment(submission: AssessmentSubmission, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    progress = current_user.get_progress()
+    
+    if submission.score >= 70:
+        if submission.skill_name not in progress["completed_modules"]:
+            progress["completed_modules"].append(submission.skill_name)
+            
+            # Store feedback in progress for future lesson adaptation if provided
+            if submission.feedback:
+                if "feedback" not in progress:
+                    progress["feedback"] = {}
+                progress["feedback"][submission.skill_name] = submission.feedback
+                
+            current_user.set_progress(progress)
+            db.commit()
+            return {"status": "success", "message": "Module completed", "progress": progress}
+    
+    return {"status": "failure", "message": "Score too low or module already completed", "progress": progress}
+
+class TopicProgressRequest(BaseModel):
+    skill_name: str
+    topic_index: int
+
+@app.post("/api/progress/topic")
+def sync_topic_progress(request: TopicProgressRequest, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    progress = current_user.get_progress()
+    if "bookmarks" not in progress:
+        progress["bookmarks"] = {}
+    
+    progress["bookmarks"][request.skill_name] = request.topic_index
+    current_user.set_progress(progress)
+    db.commit()
+    return {"status": "success", "progress": progress}
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -71,12 +126,20 @@ def read_root():
     return FileResponse("templates/index.html")
 
 @app.post("/run")
-def run(user_input: UserInput):
+def run(user_input: UserInput, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
     store = SessionStore()
-    store.save_history("default_session", []) 
+    store.save_history(f"{current_user.username}_session", []) 
+    
     result = run_graph(user_input)
     result_dict = jsonable_encoder(result)
-    result_dict["session_id"] = "default_session"
+    result_dict["session_id"] = f"{current_user.username}_session"
+    
+    # Persist to database
+    current_user.current_role = user_input.current_role
+    current_user.target_role = user_input.target_role
+    current_user.roadmap_json = json.dumps(result_dict)
+    db.commit()
+    
     return result_dict
 
 class ChatMessage(BaseModel):
@@ -99,7 +162,7 @@ def chat(chat_input: ChatMessage):
 class ChatRequest(BaseModel):
     message: str
     context: str
-    history: List[dict[str, str]]
+    history: List[Dict[str, str]]
 
 @app.post("/api/chat")
 def api_chat(request: ChatRequest):
@@ -124,6 +187,39 @@ def api_chat(request: ChatRequest):
     
     response = llm.generate(messages)
     return {"reply": response.content}
+
+class LessonRequest(BaseModel):
+    skill_name: str
+    topic_name: str
+    user_feedback: Optional[str] = None
+
+@app.post("/api/generate-lesson")
+def generate_lesson(request: LessonRequest):
+    try:
+        agent = TutorAgent()
+        content = agent.generate_lesson(
+            skill_name=request.skill_name,
+            topic_name=request.topic_name,
+            user_feedback=request.user_feedback
+        )
+        return {"content": content}
+    except Exception as e:
+        print(f"Error generating lesson: {e}")
+        return {"content": "The AI Teacher is taking a short break. Please click Previous and then Next to try again."}
+
+class AssessmentRequestPayload(BaseModel):
+    skill_name: str
+    topics: List[str]
+    batch_number: int
+
+@app.post("/api/generate-assessment")
+def generate_assessment(request: AssessmentRequestPayload):
+    agent = AssessmentAgent()
+    return agent.generate_assessment(
+        module_name=request.skill_name,
+        topics=request.topics,
+        batch_number=request.batch_number
+    )
 
 @app.post("/next-topic")
 def next_topic(state: GraphState):

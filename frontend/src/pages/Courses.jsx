@@ -46,7 +46,9 @@ const Courses = () => {
     }))
   );
 
-  const { startSkill } = useRoadmap();
+  const { user, startSkill } = useRoadmap();
+  const progressData = user?.progress_data ? (typeof user.progress_data === 'string' ? JSON.parse(user.progress_data) : user.progress_data) : { completed_modules: [] };
+  const completedModules = progressData?.completed_modules || [];
 
   return (
     <div className="max-w-7xl mx-auto py-10 px-4 animate-in fade-in slide-in-from-bottom-6 duration-1000">
@@ -70,10 +72,20 @@ const Courses = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {(allSkills || []).map((skill, index) => {
-          const isCompleted = (completedTopics || []).includes(skill?.skill);
+          const isCompleted = (completedModules || []).includes(skill?.skill);
+          
+          // Lock logic: first module (index 0) is always unlocked. 
+          // Subsequent modules (index > 0) are unlocked only if the previous module is completed.
+          const isPreviousCompleted = index === 0 || (completedModules || []).includes(allSkills[index - 1]?.skill);
+          const isLocked = !isPreviousCompleted;
           
           return (
-            <div key={index} className="group bg-white rounded-[2.5rem] border border-slate-100 p-8 shadow-xl shadow-slate-200/40 hover:shadow-2xl hover:shadow-primary-100/30 transition-all hover:-translate-y-2 relative overflow-hidden flex flex-col h-full">
+            <div 
+              key={index} 
+              className={`group bg-white rounded-[2.5rem] border border-slate-100 p-8 shadow-xl shadow-slate-200/40 transition-all relative overflow-hidden flex flex-col h-full ${
+                isLocked ? 'opacity-50 cursor-not-allowed grayscale-[0.5]' : 'hover:shadow-2xl hover:shadow-primary-100/30 hover:-translate-y-2'
+              }`}
+            >
               <div className="flex items-center justify-between mb-8">
                 <span className={`px-4 py-1.5 rounded-full text-[0.65rem] font-black uppercase tracking-widest border ${
                   skill?.stageNumber === 1 ? 'bg-blue-50 text-blue-600 border-blue-100' : 
@@ -82,11 +94,15 @@ const Courses = () => {
                 }`}>
                   Phase {skill?.stageNumber || "?"}
                 </span>
-                {isCompleted && (
+                {isCompleted ? (
                   <div className="flex items-center gap-1.5 text-green-600">
                     <CheckCircle className="w-5 h-5" /><span className="text-[0.65rem] font-black uppercase tracking-widest">Mastered</span>
                   </div>
-                )}
+                ) : isLocked ? (
+                  <div className="flex items-center gap-1.5 text-slate-400">
+                    <span className="text-[0.65rem] font-black uppercase tracking-widest">Locked</span>
+                  </div>
+                ) : null}
               </div>
               <div className="mb-6">
                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform ${isCompleted ? 'bg-green-50 text-green-600' : 'bg-slate-50 text-slate-600 group-hover:bg-primary-50 group-hover:text-primary-600'}`}><BookOpen className="w-7 h-7" /></div>
@@ -105,12 +121,18 @@ const Courses = () => {
                 <div className="flex items-center gap-2 text-slate-400 text-xs font-bold"><Clock className="w-4 h-4" />{skill?.estimated_weeks || 0} {skill?.estimated_weeks === 1 ? 'Week' : 'Weeks'}</div>
                 <button 
                   onClick={() => {
+                    if (isLocked) return;
                     if (skill?.skill) startSkill(skill.skill);
                     navigate(`/learning/${(skill?.skill || "module").toLowerCase().replace(/ /g, '-')}`, { state: { skill } });
                   }}
-                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${isCompleted ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-slate-900 text-white hover:bg-primary-600 shadow-lg shadow-slate-200 group-hover:shadow-primary-200'}`}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${
+                    isLocked ? 'bg-slate-100 text-slate-400' :
+                    isCompleted ? 'bg-green-50 text-green-600 hover:bg-green-100' : 
+                    'bg-slate-900 text-white hover:bg-primary-600 shadow-lg shadow-slate-200 group-hover:shadow-primary-200'
+                  }`}
+                  disabled={isLocked}
                 >
-                  {isCompleted ? 'Review' : 'Start Module'}<PlayCircle className="w-4 h-4" />
+                  {isCompleted ? 'Review' : isLocked ? 'Locked' : 'Start Module'}<PlayCircle className="w-4 h-4" />
                 </button>
               </div>
             </div>

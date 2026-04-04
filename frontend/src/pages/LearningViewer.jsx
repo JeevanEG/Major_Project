@@ -1,20 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocation, useNavigate, useParams, Link } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import { 
   ArrowLeft, 
   MessageSquare, 
   Send, 
   Zap, 
-  BookOpen, 
-  CheckCircle,
-  X,
-  Sparkles,
-  ChevronRight,
+  X, 
+  Sparkles, 
+  ChevronRight, 
   ChevronLeft,
   Loader2,
-  AlertCircle,
-  Circle,
-  HelpCircle
+  Circle
 } from 'lucide-react';
 import { useRoadmap } from '../context/RoadmapContext';
 import { tutorApi } from '../api/client';
@@ -23,54 +20,72 @@ const LearningViewer = () => {
   const { skillId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const { roadmapData, updateRoadmap } = useRoadmap();
+  const { roadmapData, user } = useRoadmap();
   
-  // Topic Pagination State
-  const [currentTopicIndex, setCurrentTopicIndex] = useState(0);
-  const [displayedText, setDisplayedText] = useState('');
-  const [isStreaming, setIsStreaming] = useState(true);
-  
-  // Chat State
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState([
-    { role: 'assistant', content: "Hi! I'm your AI Tutor. Feel free to ask me any questions about this module as you read through it." }
-  ]);
-  const [inputText, setInputText] = useState('');
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  
-  // Quiz State
-  const [showQuiz, setShowQuiz] = useState(false);
-  const [quizData, setQuizData] = useState(null);
-  const [selectedAnswer, setSelectedAnswer] = useState('');
-  const [isQuizLoading, setIsQuizLoading] = useState(false);
-  const [quizFeedback, setQuizFeedback] = useState(null);
-  
-  const chatEndRef = useRef(null);
-  const streamingRef = useRef(null);
-
-  // Find the current skill from roadmapData
+  // Extract skill and topics
   const skill = roadmapData?.curriculum_plan?.learning_stages
     ?.flatMap(stage => stage.skills.map(s => ({ ...s, stageNumber: stage.stage })))
     ?.find(s => s.skill.toLowerCase().replace(/ /g, '-') === skillId) || location.state?.skill;
 
-  const topics = skill?.topics || ["Introduction to the Module", "Core Concepts", "Advanced Implementation"];
+  const topics = skill?.topics || ["Introduction", "Core Principles", "Advanced Techniques"];
+  const skillName = skill?.skill || "Module";
+
+  // 2. State Initialization (Resume functionality)
+  const initialIndex = useMemo(() => {
+    if (user?.progress_data?.bookmarks && user.progress_data.bookmarks[skillName]) {
+      return user.progress_data.bookmarks[skillName];
+    }
+    return 0;
+  }, [user, skillName]);
+
+  // 1. State Management
+  const [currentTopicIndex, setCurrentTopicIndex] = useState(initialIndex);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [displayedText, setDisplayedText] = useState('');
+  const [fullContent, setFullContent] = useState(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // Chat State
+  const [chatMessages, setChatMessages] = useState([
+    { role: 'assistant', content: "Hi! I'm your AI Tutor. Ask me anything about this topic." }
+  ]);
+  const [inputText, setInputText] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  
+  const chatEndRef = useRef(null);
+
+  // 2. Proactive Error Prevention (Routing Crash Fix)
+  if (skill === undefined || skill === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-100 max-w-md text-center">
+          <div className="w-16 h-16 bg-primary-50 text-primary-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Zap className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-black text-slate-900 mb-4 tracking-tight">Session Expired</h2>
+          <p className="text-slate-500 font-medium mb-8">Please return to the Catalog to select a course.</p>
+          <Link to="/courses" className="inline-flex items-center gap-2 px-8 py-4 bg-primary-600 text-white font-black rounded-2xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-200">
+            <ArrowLeft className="w-5 h-5" />
+            Back to Catalog
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   const currentTopic = topics[currentTopicIndex];
-  const skillName = skill?.skill || "Untitled Module";
 
-  // Topic-specific dummy content
-  const generateContent = (topic) => {
-    return `Let's dive into ${topic}. This segment is critical for mastering ${skillName}. 
-
-In professional engineering, understanding ${topic} allows for more scalable and maintainable architectures. We will look at how this integrates with industry standards and your specific career goal as a ${roadmapData?.learner_profile?.target_role || 'specialist'}.
-
-Key takeaways for ${topic}:
-1. Theoretical foundations and mental models.
-2. Real-world application patterns.
-3. Common pitfalls and how to avoid them.
-4. Optimization strategies for enterprise scale.
-
-By mastering this topic, you are one step closer to full competency in ${skillName}. Take your time to digest the concepts, and use the AI Tutor if any part of this explanation remains unclear.`;
-  };
+  // Data Preparation (100 Lines Per Page)
+  const slides = useMemo(() => {
+    if (fullContent === null || fullContent === undefined || fullContent === "") return [];
+    const lines = fullContent.split("\n");
+    const chunks = [];
+    for (let i = 0; i < lines.length; i += 100) {
+      chunks.push(lines.slice(i, i + 100).join("\n"));
+    }
+    return chunks;
+  }, [fullContent]);
 
   useEffect(() => {
     if (!skill && roadmapData) {
@@ -78,41 +93,59 @@ By mastering this topic, you are one step closer to full competency in ${skillNa
     }
   }, [skill, navigate, roadmapData]);
 
-  // Streaming Effect - Resets on topic change
+  // Fetch Logic
   useEffect(() => {
-    if (!skill || showQuiz) return;
-    
-    setDisplayedText('');
-    setIsStreaming(true);
-    
-    const content = generateContent(currentTopic);
-    const words = content.split(' ');
-    let i = 0;
-    
-    if (streamingRef.current) clearInterval(streamingRef.current);
-    
-    streamingRef.current = setInterval(() => {
-      if (i < words.length) {
-        setDisplayedText((prev) => prev + (prev ? ' ' : '') + words[i]);
-        i++;
-      } else {
-        clearInterval(streamingRef.current);
-        setIsStreaming(false);
-      }
-    }, 30);
+    const fetchContent = async () => {
+      setIsLoading(true);
+      setFullContent(null);
+      setDisplayedText('');
+      setCurrentSlideIndex(0); // Reset slide on topic change
 
-    return () => clearInterval(streamingRef.current);
-  }, [currentTopicIndex, skill, showQuiz]);
+      try {
+        const response = await tutorApi.generateLesson(skillName, currentTopic);
+        setFullContent(response.content);
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Fetch error:', err);
+        const errorMsg = "The AI Teacher is taking a short break. Please click Previous and then Next to try again.";
+        setFullContent(errorMsg);
+        setDisplayedText(errorMsg);
+        setIsLoading(false);
+      }
+    };
+
+    fetchContent();
+  }, [currentTopicIndex, skillId]);
+
+  // 1. The Ultimate Strict Mode Fix: Recursive setTimeout with cancellation flag
+  useEffect(() => {
+    if (slides.length === 0) return;
+    
+    let isCancelled = false;
+    setDisplayedText("");
+    const textToStream = slides[currentSlideIndex];
+    let index = 0;
+    
+    const typeNextChar = () => {
+      if (isCancelled) return;
+      
+      if (index < textToStream.length) {
+        setDisplayedText(textToStream.substring(0, index + 1));
+        index++;
+        setTimeout(typeNextChar, 5);
+      }
+    };
+
+    typeNextChar();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [slides, currentSlideIndex]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, isChatOpen]);
-
-  if (!skill) return (
-    <div className="min-h-screen flex items-center justify-center bg-white">
-      <Loader2 className="w-12 h-12 animate-spin text-primary-600" />
-    </div>
-  );
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
@@ -120,295 +153,189 @@ By mastering this topic, you are one step closer to full competency in ${skillNa
 
     const userMsg = inputText.trim();
     setInputText('');
-    
     setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
     setIsChatLoading(true);
 
     try {
-      // Wire to backend /api/chat endpoint
-      const response = await tutorApi.contextualChat(userMsg, `${skillName} - ${currentTopic}`, chatMessages);
-      
-      // Sync UI messages
-      setChatMessages(prev => [
-        ...prev, 
-        { role: 'assistant', content: response.reply }
-      ]);
+      const response = await tutorApi.contextualChat(userMsg, `${skillName}: ${currentTopic}`, chatMessages);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: response.reply }]);
     } catch (err) {
-      console.error('Chat error:', err);
-      setChatMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: "Error connecting to AI. Please try again." }]);
     } finally {
       setIsChatLoading(false);
     }
   };
 
-  const handleTakeAssessment = async () => {
-    setIsQuizLoading(true);
-    setShowQuiz(true);
-    setQuizFeedback(null);
-    setSelectedAnswer('');
+  // 3. State Syncing (Saving progress)
+  const handleNextTopic = () => {
+    const nextIndex = currentTopicIndex + 1;
+    // Silent background sync
+    tutorApi.syncTopicProgress(skillName, nextIndex).catch(console.error);
     
-    try {
-      const updatedState = await tutorApi.generateQuiz(roadmapData);
-      updateRoadmap(updatedState);
-      setQuizData(updatedState.active_quiz);
-    } catch (err) {
-      console.error('Quiz generation error:', err);
-    } finally {
-      setIsQuizLoading(false);
-    }
+    setCurrentTopicIndex(nextIndex);
+    setCurrentSlideIndex(0);
   };
 
-  const handleSubmitAnswer = async () => {
-    if (!selectedAnswer || isQuizLoading) return;
-    
-    setIsQuizLoading(true);
-    try {
-      const result = await tutorApi.submitAnswer(roadmapData, selectedAnswer);
-      updateRoadmap(result.state);
-      setQuizFeedback({
-        isCorrect: result.is_correct,
-        message: result.state.chat_history[result.state.chat_history.length - 1].content
-      });
-    } catch (err) {
-      console.error('Submit answer error:', err);
-    } finally {
-      setIsQuizLoading(false);
-    }
-  };
-
-  const handleNextTopic = async () => {
-    setIsQuizLoading(true);
-    try {
-      const updatedState = await tutorApi.nextTopic(roadmapData);
-      updateRoadmap(updatedState);
-      setShowQuiz(false);
-      setQuizData(null);
-      setQuizFeedback(null);
-      // If we finished the module via assessment, we might want to navigate back
-      navigate('/courses');
-    } catch (err) {
-      console.error('Next topic error:', err);
-    } finally {
-      setIsQuizLoading(false);
-    }
+  const handleTakeAssessment = () => {
+    navigate('/assessment', { state: { skill, topics } });
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col relative font-sans">
-      {/* Premium Header */}
-      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-100 px-8 py-5 flex items-center justify-between">
+    <div className="min-h-screen bg-white flex flex-col relative font-sans text-slate-900">
+      
+      {/* 3. Top Bar */}
+      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-100 px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <Link to="/courses" className="flex items-center gap-2 text-slate-400 hover:text-slate-900 transition-all font-bold text-sm group">
-            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+          <Link to="/courses" className="flex items-center gap-2 text-slate-400 hover:text-primary-600 transition-all font-bold text-sm">
+            <ArrowLeft className="w-5 h-5" />
             <span>Back to Catalog</span>
           </Link>
           <div className="h-6 w-px bg-slate-100" />
-          <h1 className="text-sm font-black text-slate-900 tracking-tight">{skillName}</h1>
+          <h1 className="text-sm font-black tracking-tight text-slate-400 uppercase">{currentTopic}</h1>
         </div>
         
-        <div className="flex items-center gap-4">
-          <div className="hidden md:flex flex-col items-end">
-            <span className="text-[0.6rem] font-black text-slate-400 uppercase tracking-widest">Fast-Track</span>
-            <span className="text-[0.6rem] font-bold text-primary-600">Already know this? Skip to the test.</span>
-          </div>
-          <button 
-            onClick={handleTakeAssessment}
-            className="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-black text-sm rounded-xl shadow-lg shadow-primary-200 transition-all active:scale-95 flex items-center gap-2"
-          >
-            Take Assessment
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
+        <button 
+          onClick={handleTakeAssessment}
+          className="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-black text-sm rounded-xl shadow-lg shadow-primary-200 transition-all active:scale-95 flex items-center gap-2"
+        >
+          Take Assessment
+          <ChevronRight className="w-4 h-4" />
+        </button>
       </header>
 
-      {/* Content Area */}
-      <main className="flex-1 overflow-y-auto">
+      {/* Main Area */}
+      <main className="flex-1 overflow-y-auto pb-32">
         <div className="max-w-3xl mx-auto py-20 px-6">
-          {!showQuiz ? (
-            <div className="animate-in fade-in duration-1000">
-              <div className="flex items-center gap-3 mb-8">
-                <div className="px-3 py-1 bg-primary-50 text-primary-600 rounded-lg text-[0.65rem] font-black uppercase tracking-widest border border-primary-100">
-                  Topic {currentTopicIndex + 1} of {topics.length}
+          <div className="animate-in fade-in duration-1000">
+            <div className="flex items-center justify-between mb-6">
+              <span className="text-[0.65rem] font-black text-primary-600 uppercase tracking-[0.2em] bg-primary-50 px-3 py-1 rounded-lg">
+                Topic {currentTopicIndex + 1} of {topics.length}
+              </span>
+              {slides.length > 1 && (
+                <span className="text-[0.65rem] font-black text-slate-400 uppercase tracking-widest">
+                  Page {currentSlideIndex + 1} of {slides.length}
+                </span>
+              )}
+            </div>
+            
+            <h2 className="text-5xl font-black mb-12 tracking-tighter leading-tight">
+              {currentTopic}
+            </h2>
+
+            {isLoading ? (
+              <div className="min-h-[400px] flex flex-col items-center justify-center text-center space-y-6">
+                <div className="relative">
+                  <div className="w-20 h-20 border-4 border-primary-100 border-t-primary-600 rounded-full animate-spin" />
+                  <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 text-primary-600 animate-pulse" />
                 </div>
-                <div className="w-1.5 h-1.5 bg-slate-200 rounded-full" />
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{skillName}</span>
-              </div>
-              
-              <h2 className="text-5xl md:text-6xl font-black text-slate-900 mb-12 tracking-tighter leading-tight">
-                {currentTopic}
-              </h2>
-
-              <div className="prose prose-slate prose-lg max-w-none text-slate-700 leading-relaxed font-medium min-h-[400px]">
-                <div className="whitespace-pre-wrap">
-                  {displayedText}
-                  {isStreaming && <span className="inline-block w-1.5 h-5 bg-primary-500 ml-1 animate-pulse align-middle" />}
+                <div className="space-y-2">
+                  <p className="text-xl font-black text-slate-900 tracking-tight">AI Teacher is preparing your lesson...</p>
+                  <p className="text-slate-400 font-medium text-sm">Orchestrating domain knowledge and professional insights.</p>
                 </div>
               </div>
-
-              {/* Topic Navigation */}
-              <div className="mt-20 pt-10 border-t border-slate-100 flex items-center justify-between">
-                {currentTopicIndex > 0 ? (
-                  <button 
-                    onClick={() => setCurrentTopicIndex(prev => prev - 1)}
-                    className="flex items-center gap-2 text-slate-400 hover:text-slate-900 font-bold transition-all"
-                  >
-                    <ChevronLeft className="w-5 h-5" /> Previous Topic
-                  </button>
-                ) : <div />}
-
-                {currentTopicIndex < topics.length - 1 ? (
-                  <button 
-                    onClick={() => setCurrentTopicIndex(prev => prev + 1)}
-                    disabled={isStreaming}
-                    className="flex items-center gap-2 text-primary-600 hover:text-primary-700 font-black transition-all disabled:opacity-50"
-                  >
-                    Next Topic <ChevronRight className="w-5 h-5" />
-                  </button>
-                ) : (
-                  <button 
-                    onClick={handleTakeAssessment}
-                    disabled={isStreaming}
-                    className="px-8 py-4 bg-primary-600 text-white font-black rounded-2xl shadow-xl shadow-primary-200 hover:bg-primary-700 transition-all flex items-center gap-3 disabled:opacity-50 group"
-                  >
-                    Complete & Take Assessment
-                    <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  </button>
+            ) : (
+              <div className="prose prose-slate prose-xl max-w-none text-slate-700 leading-relaxed font-medium min-h-[400px]">
+                <ReactMarkdown>{displayedText}</ReactMarkdown>
+                {slides.length > 0 && displayedText.length < slides[currentSlideIndex].length && (
+                  <span className="inline-block w-2 h-6 bg-primary-500 ml-1 animate-pulse align-middle" />
                 )}
               </div>
-            </div>
-          ) : (
-            <div className="animate-in fade-in zoom-in-95 duration-500">
-               <button onClick={() => setShowQuiz(false)} className="flex items-center gap-2 text-slate-400 hover:text-slate-600 font-bold text-sm mb-12 transition-colors">
-                  <ArrowLeft className="w-4 h-4" /> Back to Lessons
+            )}
+
+            {/* Pagination UI and Navigation Logic */}
+            <div className="mt-24 pt-10 border-t border-slate-100 flex items-center justify-between">
+              {currentSlideIndex > 0 ? (
+                <button 
+                  onClick={() => setCurrentSlideIndex(prev => prev - 1)}
+                  className="flex items-center gap-3 text-slate-400 hover:text-slate-900 font-black transition-all group"
+                >
+                  <ChevronLeft className="w-6 h-6 group-hover:-translate-x-1 transition-transform" /> 
+                  Previous Page
                 </button>
-                
-                {isQuizLoading && !quizData ? (
-                  <div className="flex flex-col items-center justify-center py-20 space-y-4">
-                    <Loader2 className="w-12 h-12 animate-spin text-primary-600" />
-                    <p className="text-slate-500 font-bold">Generating your assessment...</p>
-                  </div>
-                ) : quizData ? (
-                  <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl shadow-slate-200/50 overflow-hidden">
-                    <div className="bg-[#1e1b4b] p-10 text-white">
-                      <div className="flex items-center gap-2 text-primary-400 text-[0.65rem] font-black uppercase tracking-[0.2em] mb-4">
-                        <Sparkles className="w-4 h-4" /> Knowledge Check
-                      </div>
-                      <h3 className="text-2xl font-bold leading-tight">{quizData.question}</h3>
-                    </div>
-                    
-                    <div className="p-10 space-y-4">
-                      {Object.entries(quizData.options).map(([key, value]) => (
-                        <button
-                          key={key}
-                          onClick={() => !quizFeedback && setSelectedAnswer(key)}
-                          disabled={!!quizFeedback}
-                          className={`w-full text-left p-6 rounded-2xl border-2 transition-all flex items-center gap-5 ${
-                            selectedAnswer === key 
-                              ? 'border-primary-600 bg-primary-50' 
-                              : 'border-slate-50 hover:border-primary-200 bg-slate-50/50 hover:bg-white'
-                          } ${
-                            quizFeedback && key === quizData.correct_option ? 'border-green-500 bg-green-50' : ''
-                          } ${
-                            quizFeedback && selectedAnswer === key && !quizFeedback.isCorrect ? 'border-rose-500 bg-rose-50' : ''
-                          }`}
-                        >
-                          <span className={`w-10 h-10 rounded-xl flex items-center justify-center font-black transition-all ${
-                            selectedAnswer === key ? 'bg-primary-600 text-white' : 'bg-white text-slate-400 border border-slate-100'
-                          }`}>
-                            {key.toUpperCase()}
-                          </span>
-                          <span className="font-bold text-slate-700">{value}</span>
-                          {quizFeedback && key === quizData.correct_option && <CheckCircle className="ml-auto w-6 h-6 text-green-500" />}
-                        </button>
-                      ))}
-                    </div>
+              ) : currentTopicIndex > 0 ? (
+                <button 
+                  onClick={() => setCurrentTopicIndex(prev => prev - 1)}
+                  className="flex items-center gap-3 text-slate-400 hover:text-slate-900 font-black transition-all group"
+                >
+                  <ChevronLeft className="w-6 h-6 group-hover:-translate-x-1 transition-transform" /> 
+                  Previous Topic
+                </button>
+              ) : <div />}
 
-                    {quizFeedback && (
-                      <div className={`mx-10 mb-10 p-8 rounded-3xl flex items-start gap-5 ${quizFeedback.isCorrect ? 'bg-green-50 border border-green-100' : 'bg-rose-50 border border-rose-100'}`}>
-                        {quizFeedback.isCorrect ? (
-                          <div className="bg-green-500 text-white p-1.5 rounded-lg"><CheckCircle className="w-5 h-5" /></div>
-                        ) : (
-                          <div className="bg-rose-500 text-white p-1.5 rounded-lg"><AlertCircle className="w-5 h-5" /></div>
-                        )}
-                        <div>
-                          <p className={`font-black uppercase text-[0.65rem] tracking-widest mb-1 ${quizFeedback.isCorrect ? 'text-green-600' : 'text-rose-600'}`}>
-                            {quizFeedback.isCorrect ? 'Excellence Achieved' : 'Learning Opportunity'}
-                          </p>
-                          <p className="text-slate-700 font-medium leading-relaxed">{quizFeedback.message}</p>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="p-10 bg-slate-50/50 border-t border-slate-100 flex justify-end">
-                      {!quizFeedback ? (
-                        <button
-                          onClick={handleSubmitAnswer}
-                          disabled={!selectedAnswer || isQuizLoading}
-                          className="px-12 py-5 bg-primary-600 text-white font-black rounded-2xl hover:bg-primary-700 disabled:opacity-50 transition-all flex items-center gap-3 shadow-xl shadow-primary-200"
-                        >
-                          {isQuizLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'Submit Verification'}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={quizFeedback.isCorrect ? handleNextTopic : () => { setQuizFeedback(null); setSelectedAnswer(''); }}
-                          className={`px-12 py-5 font-black rounded-2xl transition-all flex items-center gap-3 shadow-xl ${
-                            quizFeedback.isCorrect 
-                              ? 'bg-slate-900 text-white hover:bg-primary-600 shadow-slate-200' 
-                              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-                          }`}
-                        >
-                          {quizFeedback.isCorrect ? 'Next Concept' : 'Try Again'} <ChevronRight className="w-5 h-5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
+              {currentSlideIndex < slides.length - 1 ? (
+                <button 
+                  onClick={() => setCurrentSlideIndex(prev => prev + 1)}
+                  disabled={isLoading || (slides.length > 0 && displayedText.length < slides[currentSlideIndex].length)}
+                  className="flex items-center gap-3 text-primary-600 hover:text-primary-700 font-black transition-all disabled:opacity-30 group"
+                >
+                  Next Page 
+                  <ChevronRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
+                </button>
+              ) : currentTopicIndex < topics.length - 1 ? (
+                <button 
+                  onClick={handleNextTopic}
+                  disabled={isLoading || (slides.length > 0 && displayedText.length < slides[currentSlideIndex].length)}
+                  className="flex items-center gap-3 text-primary-600 hover:text-primary-700 font-black transition-all disabled:opacity-30 group"
+                >
+                  Next Topic 
+                  <ChevronRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
+                </button>
+              ) : (
+                <button 
+                  onClick={handleTakeAssessment}
+                  disabled={isLoading || (slides.length > 0 && displayedText.length < slides[currentSlideIndex].length)}
+                  className="px-10 py-5 bg-primary-600 text-white font-black rounded-2xl shadow-xl shadow-primary-200 hover:bg-primary-700 transition-all flex items-center gap-3 group disabled:opacity-50"
+                >
+                  Complete Module & Take Assessment
+                  <ChevronRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
+                </button>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </main>
 
-      {/* Floating Bottom-Left AI Chatbot */}
-      <div className="fixed bottom-6 left-6 z-50 font-sans">
+      {/* 4. Floating Bottom-Left AI Chatbot */}
+      <div className="fixed bottom-8 left-8 z-50">
         {!isChatOpen ? (
           <button 
             onClick={() => setIsChatOpen(true)}
-            className="group flex items-center gap-3 px-6 py-4 bg-white text-primary-600 font-black rounded-full shadow-[0_20px_50px_rgba(0,0,0,0.1)] border border-slate-100 hover:-translate-y-1 transition-all active:scale-95"
+            className="group flex items-center gap-4 px-8 py-5 bg-white text-primary-600 font-black rounded-full shadow-[0_20px_60px_rgba(0,0,0,0.12)] border border-slate-50 hover:-translate-y-1 transition-all active:scale-95"
           >
-            <div className="w-10 h-10 bg-primary-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-primary-200 group-hover:rotate-12 transition-transform">
-              <MessageSquare className="w-5 h-5" />
+            <div className="w-12 h-12 bg-primary-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-primary-200 group-hover:rotate-12 transition-transform">
+              <MessageSquare className="w-6 h-6" />
             </div>
             <span>Ask me if any doubts</span>
           </button>
         ) : (
-          <div className="w-[380px] h-[520px] bg-white rounded-3xl shadow-[0_30px_100px_rgba(0,0,0,0.15)] flex flex-col border border-slate-100 animate-in slide-in-from-bottom-10 fade-in duration-300 overflow-hidden">
+          <div className="w-[400px] h-[550px] bg-white rounded-[2.5rem] shadow-[0_40px_120px_rgba(0,0,0,0.2)] flex flex-col border border-slate-100 animate-in slide-in-from-bottom-10 duration-300 overflow-hidden">
             {/* Chat Header */}
-            <div className="px-6 py-5 bg-[#1e1b4b] text-white flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center">
-                  <Zap className="w-5 h-5" />
+            <div className="px-8 py-6 bg-[#1e1b4b] text-white flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-primary-600 rounded-2xl flex items-center justify-center shadow-lg shadow-primary-900/20">
+                  <Zap className="w-6 h-6" />
                 </div>
                 <div>
-                  <h4 className="font-black text-sm">AI Tutor</h4>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
-                    <span className="text-[0.6rem] font-bold text-primary-200 uppercase tracking-widest">Always Active</span>
+                  <h4 className="font-black text-base leading-none mb-1">AI Tutor</h4>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                    <span className="text-[0.7rem] font-bold text-primary-300 uppercase tracking-widest">Active Support</span>
                   </div>
                 </div>
               </div>
-              <button onClick={() => setIsChatOpen(false)} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                <X className="w-5 h-5" />
+              <button onClick={() => setIsChatOpen(false)} className="p-2 hover:bg-white/10 rounded-xl transition-colors">
+                <X className="w-6 h-6" />
               </button>
             </div>
 
             {/* Chat Body */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50">
+            <div className="flex-1 overflow-y-auto p-8 space-y-6 bg-slate-50/30">
               {chatMessages.map((msg, idx) => (
-                <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                  <div className={`w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-white shadow-sm ${msg.role === 'user' ? 'bg-slate-900' : 'bg-primary-600'}`}>
-                    {msg.role === 'user' ? <Circle className="w-4 h-4 fill-white" /> : <Zap className="w-4 h-4" />}
+                <div key={idx} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                  <div className={`w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white shadow-sm ${msg.role === 'user' ? 'bg-slate-900' : 'bg-primary-600'}`}>
+                    {msg.role === 'user' ? <Circle className="w-5 h-5 fill-white" /> : <Zap className="w-5 h-5" />}
                   </div>
-                  <div className={`max-w-[85%] p-4 rounded-2xl shadow-sm border text-sm font-medium leading-relaxed ${
+                  <div className={`max-w-[85%] p-5 rounded-3xl shadow-sm border text-sm font-bold leading-relaxed ${
                     msg.role === 'user' 
                       ? 'bg-slate-900 text-white border-slate-800 rounded-tr-none' 
                       : 'bg-white text-slate-700 border-slate-100 rounded-tl-none'
@@ -418,16 +345,14 @@ By mastering this topic, you are one step closer to full competency in ${skillNa
                 </div>
               ))}
               {isChatLoading && (
-                <div className="flex gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-primary-600 flex-shrink-0 flex items-center justify-center text-white animate-pulse">
-                    <Zap className="w-4 h-4" />
+                <div className="flex gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-primary-600 flex-shrink-0 flex items-center justify-center text-white animate-pulse">
+                    <Zap className="w-5 h-5" />
                   </div>
-                  <div className="bg-white p-4 rounded-2xl rounded-tl-none border border-slate-100 shadow-sm">
-                    <div className="flex gap-1">
-                      <div className="w-1.5 h-1.5 bg-slate-300 rounded-full animate-bounce" />
-                      <div className="w-1.5 h-1.5 bg-slate-300 rounded-full animate-bounce [animation-delay:0.2s]" />
-                      <div className="w-1.5 h-1.5 bg-slate-300 rounded-full animate-bounce [animation-delay:0.4s]" />
-                    </div>
+                  <div className="bg-white p-5 rounded-3xl rounded-tl-none border border-slate-100 shadow-sm flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 bg-slate-300 rounded-full animate-bounce" />
+                    <div className="w-1.5 h-1.5 bg-slate-300 rounded-full animate-bounce [animation-delay:0.2s]" />
+                    <div className="w-1.5 h-1.5 bg-slate-300 rounded-full animate-bounce [animation-delay:0.4s]" />
                   </div>
                 </div>
               )}
@@ -435,7 +360,7 @@ By mastering this topic, you are one step closer to full competency in ${skillNa
             </div>
 
             {/* Chat Footer */}
-            <form onSubmit={handleSendMessage} className="p-5 bg-white border-t border-slate-100">
+            <form onSubmit={handleSendMessage} className="p-6 bg-white border-t border-slate-100">
               <div className="relative">
                 <input 
                   type="text" 
@@ -443,14 +368,14 @@ By mastering this topic, you are one step closer to full competency in ${skillNa
                   onChange={(e) => setInputText(e.target.value)}
                   disabled={isChatLoading}
                   placeholder="Ask a question..." 
-                  className="w-full pl-5 pr-12 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:border-primary-500 focus:bg-white transition-all text-sm font-bold placeholder:text-slate-300" 
+                  className="w-full pl-6 pr-14 py-5 bg-slate-50 border border-slate-100 rounded-[1.5rem] focus:outline-none focus:border-primary-500 focus:bg-white transition-all text-sm font-bold" 
                 />
                 <button 
                   type="submit"
                   disabled={!inputText.trim() || isChatLoading}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 bg-primary-600 text-white rounded-xl shadow-lg shadow-primary-200 hover:bg-primary-700 transition-all disabled:opacity-50 active:scale-95"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-3 bg-primary-600 text-white rounded-2xl shadow-lg shadow-primary-200 hover:bg-primary-700 transition-all disabled:opacity-50"
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-5 h-5" />
                 </button>
               </div>
             </form>

@@ -73,6 +73,22 @@ export const tutorApi = {
     const response = await client.post('/api/chat', { message, context, history });
     return response.data;
   },
+  generateLesson: async (skill_name, topic_name) => {
+    const response = await client.post('/api/generate-lesson', { skill_name, topic_name });
+    return response.data;
+  },
+  syncTopicProgress: async (skill_name, topic_index) => {
+    const response = await client.post('/api/progress/topic', { skill_name, topic_index });
+    return response.data;
+  },
+  generateAssessment: async (skill_name, topics) => {
+    const response = await client.post('/api/generate-assessment', { skill_name, topics });
+    return response.data;
+  },
+  submitAssessmentScore: async (module_id, score) => {
+    const response = await client.post('/api/assessment/submit', { module_id, score });
+    return response.data;
+  },
 };
 
 export default client;
